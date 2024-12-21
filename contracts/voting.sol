@@ -13,6 +13,8 @@ contract Voting {
         Indecisive,
         Pending,
         Proceeding
+        Pending,
+        Proceeding
     }
     struct Voter {
         address delegate; //allows voter to give their voting right to another
@@ -38,21 +40,33 @@ contract Voting {
     mapping(uint256 => uint256) private proposalCreationTimes;
     mapping(uint256 => bool) private proposalInVoting;
     mapping(uint256 => uint256) public proposalQueue;
+    mapping(uint256 => uint256) private proposalCreationTimes;
+    mapping(uint256 => bool) private proposalInVoting;
+    mapping(uint256 => uint256) public proposalQueue;
     Proposal[] public proposals;
+    //Constants
+    uint256 private constant votingDuration = 3 days;
     //Constants
     uint256 private constant votingDuration = 3 days;
     uint8 private constant maxActiveProposal = 5;
     uint8 private constant maxYearlyProposalPerUser = 5;
     uint32 proposalDelay = 300 seconds;
+    uint32 proposalDelay = 300 seconds;
     uint256 proposalIndex;
+    uint256 pendingProposalIndex;
     uint256 pendingProposalIndex;
     uint256 activeProposalIndex;
     uint256 proposalCreationTime;
     uint256 queueLength;
     //events
+    uint256 proposalCreationTime;
+    uint256 queueLength;
+    //events
     event proposalCreated(uint256 indexed proposalId, address indexed author, bytes32 name);
     event proposalVoted(uint256 indexed proposalId, address indexed voter, VotingOptions voteOption);
+    event proposalVoted(uint256 indexed proposalId, address indexed voter, VotingOptions voteOption);
     event proposalClosed(uint256 indexed proposalId, Status status);
+    event proposalVoting(uint256 indexed proposalId, Status status);
     event proposalVoting(uint256 indexed proposalId, Status status);
 
     
@@ -70,7 +84,7 @@ contract Voting {
         block.number,
         balance,
         msg.sender,
-        tx.origin))) % 1000;
+        tx.origin))) % 100;
         voteWeight = baseWeight + randomFactor;
     }
     function createProposal(bytes32 _name) external {
@@ -78,8 +92,11 @@ contract Voting {
         require(userProposalCount[_proposee] < maxYearlyProposalPerUser, "User Reached Proposal Limit per year");
         require(activeProposalIndex < maxActiveProposal, "Limit of Active Proposals Reached");
         require(weight(_proposee) >= 50, "Member's shares not enough!");
+        require(activeProposalIndex < maxActiveProposal, "Limit of Active Proposals Reached");
+        require(weight(_proposee) >= 50, "Member's shares not enough!");
         // tryna think of how to prevent one person from proposing too much, think of a way to limit that without incurring sybil attacks.
         uint256 _proposalId = ++proposalIndex;
+        uint256 _pendingProposalId = ++pendingProposalIndex;
         uint256 _pendingProposalId = ++pendingProposalIndex;
         proposals[_proposalId] = Proposal(
             msg.sender,
@@ -144,17 +161,22 @@ contract Voting {
     function delegate(address _to) external {
         Voter storage sender = voters[msg.sender];
         Voter storage _delegate = voters[_to];
+        Voter storage _delegate = voters[_to];
         require(sender.weight > 0, "No right to vote");
         require(!sender.voted, "You already voted, cannot delegate");
         require(msg.sender != _to, "You cannot delegate to yourself");
+        require(_delegate.weight > 0, "Delegate has no right to vote");
+        require(!voters[_to].voted, "Address has voted");
         require(_delegate.weight > 0, "Delegate has no right to vote");
         require(!voters[_to].voted, "Address has voted");
         while(voters[_to].delegate != address(0)){
             _to = voters[_to].delegate;
             require(_to != msg.sender, "Found loop in delegation!");
         }                
+        }                
         sender.voted = true;
         sender.delegate = _to;
+        _delegate.weight += sender.weight;
         _delegate.weight += sender.weight;
     }
     function vote(uint _activeProposalId, VotingOptions voteOption) external {
@@ -165,6 +187,7 @@ contract Voting {
         require(sender.weight >= 0,"You have no right to Vote!");
         require(!sender.voted, "Already Voted!");
         uint256 userWeight = weight(msg.sender);
+        if (voteOption == VotingOptions.Accept) {
         if (voteOption == VotingOptions.Accept) {
             //YES
             proposal.acceptedVotes += userWeight;
@@ -184,19 +207,25 @@ contract Voting {
         activeProposalIndex--;
         emit proposalClosed(_activeProposalId, proposal.status);
     }
-    function proposalResults(uint256 _proposalId) public view returns(Status status){
+    function proposalResultss(uint256 _proposalId) public view returns(Status status){
         Proposal memory proposal = proposals[_proposalId];
         //nedd to add if same votecount, what happens
         require(block.timestamp >= proposal.creationTime, "Voting still in progress");
         if (proposal.acceptedVotes > proposal.rejectedVotes) {
             proposal.status = Status.Accepted;
+            proposal.status = Status.Accepted;
         }else if (proposal.rejectedVotes > proposal.acceptedVotes) {
+            proposal.status = Status.Rejected;            
             proposal.status = Status.Rejected;            
         } else {
             proposal.status = Status.Indecisive;
         }
+            proposal.status = Status.Indecisive;
+        }
         return proposal.status;        
         }              
+    function getUserProposals() external view returns(Proposal[] memory userProposals) {
+        userProposals = new Proposal[](userProposalCount[msg.sender]);
     function getUserProposals() external view returns(Proposal[] memory userProposals) {
         userProposals = new Proposal[](userProposalCount[msg.sender]);
         for (uint i=0; i<userProposalCount[msg.sender]; i++) {
