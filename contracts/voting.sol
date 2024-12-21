@@ -141,7 +141,7 @@ contract Voting {
     function vote(uint _activeProposalId, VotingOptions voteOption) external {
         Voter memory sender = voters[msg.sender];
         Proposal memory proposal = activeProposals[_activeProposalId];
-        require(activeProposals[_activeProposalId].status == Status.Pending, "Proposal not Pending");
+        require(activeProposals[_activeProposalId].status == Status.Proceeding, "Proposal not in Voting Period");
         require(block.timestamp < proposal.creationTime + votingDuration, "Voting Period is over");
         require(sender.weight >= 0,"You have no right to Vote!");
         require(!sender.voted, "Already Voted!");
