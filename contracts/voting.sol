@@ -40,7 +40,7 @@ contract Voting {
     mapping(uint256 => uint256) public proposalQueue;
     Proposal[] public proposals;
     //Constants
-    uint256 private constant votingDuration = 3 days;
+    uint256 private constant votingDuration = 10 minutes;//3 days;
     uint8 private constant maxActiveProposal = 5;
     uint8 private constant maxYearlyProposalPerUser = 5;
     uint32 proposalDelay = 300 seconds;
@@ -89,7 +89,7 @@ contract Voting {
         userProposalCount[msg.sender]++;
         emit proposalCreated((_proposalId), msg.sender, _name);
         }
-    function processPendingProposals() internal {
+    function processPendingProposals() public {
         uint256 currentTime = block.timestamp;
         uint256 processedCount;
         uint256 nextProposal;
@@ -107,7 +107,7 @@ contract Voting {
     }
     function votingPeriod(uint256 _proposalId) internal {
         Proposal storage activeProposal = proposals[_proposalId];
-        uint256 _activeId = ++activeProposalIndex;
+        uint256 _activeId = activeProposalIndex;
         proposalInVoting[_proposalId] = true;
     
         activeProposals[_proposalId] = Proposal(
@@ -125,10 +125,10 @@ contract Voting {
     function delegate(address _to) external {
         Voter storage sender = voters[msg.sender];
         Voter storage _delegate = voters[_to];
-        require(sender.weight > 0, "No right to vote");
+        require(sender.weight != 0, "No right to vote");
         require(!sender.voted, "You already voted, cannot delegate");
         require(msg.sender != _to, "You cannot delegate to yourself");
-        require(_delegate.weight > 0, "Delegate has no right to vote");
+        require(_delegate.weight != 0, "Delegate has no right to vote");
         require(!voters[_to].voted, "Address has voted");
         while(voters[_to].delegate != address(0)){
             _to = voters[_to].delegate;
@@ -141,9 +141,9 @@ contract Voting {
     function vote(uint _activeProposalId, VotingOptions voteOption) external {
         Voter memory sender = voters[msg.sender];
         Proposal memory proposal = activeProposals[_activeProposalId];
-        require(activeProposals[_activeProposalId].status == Status.Proceeding, "Proposal not in Voting Period");
+        require(activeProposals[_activeProposalId].status == Status.Proceeding, "Proposal not Pending");
         require(block.timestamp < proposal.creationTime + votingDuration, "Voting Period is over");
-        require(sender.weight >= 0,"You have no right to Vote!");
+        require(sender.weight != 0,"You have no right to Vote!");
         require(!sender.voted, "Already Voted!");
         uint256 userWeight = weight(msg.sender);
         if (voteOption == VotingOptions.Accept) {
@@ -159,7 +159,7 @@ contract Voting {
     }
     function closeProposal(uint256 _activeProposalId) external {
         Proposal memory proposal = activeProposals[_activeProposalId];
-        require((proposal.status == Status.Pending), "Proposal not Pending");
+        require((proposal.status == Status.Proceeding), "Proposal not in Voting Period");
         require(block.timestamp >= proposal.creationTime, "Voting still in progress");
         delete proposal;
         activeProposalIndex--;
