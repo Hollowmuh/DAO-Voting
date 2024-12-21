@@ -43,7 +43,7 @@ contract Voting {
     uint256 private constant votingDuration = 3 days;
     uint8 private constant maxActiveProposal = 5;
     uint8 private constant maxYearlyProposalPerUser = 5;
-    uint8 proposalDelay = 5 minutes;
+    uint32 proposalDelay = 300 seconds;
     uint256 proposalIndex;
     uint256 pendingProposalIndex;
     uint256 activeProposalIndex;
@@ -60,7 +60,7 @@ contract Voting {
         tokenContract = IERC20(_tokenAddress);
     }
     
-    function weight(address _member)internal view returns (uint256) {        
+    function weight(address _member)internal view returns (uint256 voteWeight) {        
         uint256 balance = tokenContract.balanceOf(_member);
         uint256 tokenSupply = tokenContract.totalSupply();
         require(balance > 0, "Zero Token Balance!");
@@ -71,8 +71,7 @@ contract Voting {
         balance,
         msg.sender,
         tx.origin))) % 1000;
-        uint256 voteWeight = baseWeight + randomFactor;
-        return voteWeight;
+        voteWeight = baseWeight + randomFactor;
     }
     function createProposal(bytes32 _name) external {
         address _proposee = msg.sender;
@@ -99,13 +98,14 @@ contract Voting {
         0,
         0,
         Status.Pending
-    );
+        );
         proposalIndex++;
         pendingProposalIndex++;
         proposalCreationTimes[_proposalId] = block.timestamp;
         proposalQueue[queueLength++] = _proposalId;
         proposalInVoting[_proposalId] =false;
         emit proposalCreated((_proposalId), msg.sender, _name);
+        processPendingProposals();
         }
     function processPendingProposals() internal {
         uint256 currentTime = block.timestamp;
@@ -129,14 +129,16 @@ contract Voting {
         proposalInVoting[_proposalId] = true;
     
         activeProposals[_proposalId] = Proposal(
-            ,
+            activeProposal.author,
             _activeId,
             block.timestamp,
-            ,,,
+            activeProposal.name,
+            activeProposal.acceptedVotes,
+            activeProposal.rejectedVotes,
             Status.Proceeding
         );
         activeProposalIndex++;
-        pendingProposalIndex--;
+        pendingProposalIndex-1;
         
     }
     function delegate(address _to) external {
