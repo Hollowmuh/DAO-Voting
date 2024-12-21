@@ -34,9 +34,9 @@ contract Voting {
     //Mappings
     mapping(address => Voter) public voters;
     mapping(uint256 => Proposal) public activeProposals;
-    mapping(address => uint256) private userProposalCount;
+    mapping(address => uint256) public userProposalCount;
     mapping(uint256 => uint256) private proposalCreationTimes;
-    mapping(uint256 => bool) private proposalInVoting;
+    mapping(uint256 => bool) public proposalInVoting;
     mapping(uint256 => uint256) public proposalQueue;
     Proposal[] public proposals;
     //Constants
@@ -45,7 +45,6 @@ contract Voting {
     uint8 private constant maxYearlyProposalPerUser = 5;
     uint32 proposalDelay = 300 seconds;
     uint256 proposalIndex;
-    uint256 pendingProposalIndex;
     uint256 activeProposalIndex;
     uint256 proposalCreationTime;
     uint256 queueLength;
@@ -74,7 +73,6 @@ contract Voting {
         require(weight(_proposee) >= tokenSupply/5000, "Member's shares not enough!");
         // tryna think of how to prevent one person from proposing too much, think of a way to limit that without incurring sybil attacks.
         uint256 _proposalId = ++proposalIndex;
-        uint256 _pendingProposalId = ++pendingProposalIndex;
         proposals.push(Proposal(
             msg.sender,
             _proposalId,
@@ -84,17 +82,7 @@ contract Voting {
             0,
             Status.Pending
         ));
-        activeProposals[_pendingProposalId] = Proposal(
-        msg.sender,
-        _pendingProposalId,
-        block.timestamp,
-        _name,
-        0,
-        0,
-        Status.Pending
-    );
         proposalIndex++;
-        pendingProposalIndex++;
         proposalCreationTimes[_proposalId] = block.timestamp;
         proposalQueue[queueLength++] = _proposalId;
         proposalInVoting[_proposalId] =false;
@@ -131,7 +119,6 @@ contract Voting {
             Status.Proceeding
         );
         activeProposalIndex++;
-        pendingProposalIndex-1;
         
     }
     function delegate(address _to) external {
