@@ -72,7 +72,7 @@ contract Voting {
         require(activeProposalIndex < maxActiveProposal, "Limit of Active Proposals Reached");
         require(weight(_proposee) >= tokenSupply/5000, "Member's shares not enough!");
         // tryna think of how to prevent one person from proposing too much, think of a way to limit that without incurring sybil attacks.
-        uint256 _proposalId = ++proposalIndex;
+        uint256 _proposalId = proposalIndex;
         proposals.push(Proposal(
             msg.sender,
             _proposalId,
@@ -86,6 +86,7 @@ contract Voting {
         proposalCreationTimes[_proposalId] = block.timestamp;
         proposalQueue[queueLength++] = _proposalId;
         proposalInVoting[_proposalId] =false;
+        userProposalCount[msg.sender]++;
         emit proposalCreated((_proposalId), msg.sender, _name);
         }
     function processPendingProposals() internal {
