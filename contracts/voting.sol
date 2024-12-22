@@ -2,11 +2,12 @@
 pragma solidity ^0.8.25;
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 contract Voting {
-    // this one does a seperate proposal for each option.
+    ///Options for voters
     enum VotingOptions{
         Accept,
         Reject
     }
+    //Status of proposals
     enum Status{
         Accepted,
         Rejected,
@@ -14,6 +15,7 @@ contract Voting {
         Pending,
         Proceeding
     }
+    //Definition of a voter. Ba
     struct Voter {
         address delegate; //allows voter to give their voting right to another
         uint vote; //THis would ve sued to know the opinion of the voter against or in favour or mayve avstain
@@ -33,6 +35,7 @@ contract Voting {
     IERC20 tokenContract;
     //Mappings
     mapping(address => Voter) public voters;
+    mapping(address => mapping(uint256 => bool))userVoted;
     mapping(uint256 => Proposal) public activeProposals;
     mapping(address => uint256) public userProposalCount;
     mapping(uint256 => uint256) private proposalCreationTimes;
@@ -141,6 +144,7 @@ contract Voting {
     function vote(uint _activeProposalId, VotingOptions voteOption) external {
         Voter memory sender = voters[msg.sender];
         Proposal memory proposal = activeProposals[_activeProposalId];
+        require(!userVoted[msg.sender][_activeProposalId]);
         require(activeProposals[_activeProposalId].status == Status.Proceeding, "Proposal not Pending");
         require(block.timestamp < proposal.creationTime + votingDuration, "Voting Period is over");
         require(sender.weight != 0,"You have no right to Vote!");
@@ -149,16 +153,17 @@ contract Voting {
         if (voteOption == VotingOptions.Accept) {
             //YES
             proposal.acceptedVotes += userWeight;
+            userVoted[msg.sender][_activeProposalId] = true;
         } else {
             // NO
             proposal.rejectedVotes += userWeight;
+            userVoted[msg.sender][_activeProposalId] = true;
         }
-        sender.vote = _activeProposalId;
-        sender.voted = true;
         emit proposalVoted(_activeProposalId, msg.sender, voteOption);
     }
     function closeProposal(uint256 _activeProposalId) external {
         Proposal memory proposal = activeProposals[_activeProposalId];
+        require(proposal.creationTime > 0, "Proposal not Active");
         require((proposal.status == Status.Proceeding), "Proposal not in Voting Period");
         require(block.timestamp >= proposal.creationTime, "Voting still in progress");
         delete proposal;
