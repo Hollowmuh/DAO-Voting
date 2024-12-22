@@ -2,12 +2,11 @@
 pragma solidity ^0.8.25;
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 contract Voting {
-    ///Options for voters
+    // this one does a seperate proposal for each option.
     enum VotingOptions{
         Accept,
         Reject
     }
-    //Status of proposals
     enum Status{
         Accepted,
         Rejected,
@@ -15,7 +14,6 @@ contract Voting {
         Pending,
         Proceeding
     }
-    //Definition of a voter. Ba
     struct Voter {
         address delegate; //allows voter to give their voting right to another
         uint vote; //THis would ve sued to know the opinion of the voter against or in favour or mayve avstain
@@ -29,28 +27,29 @@ contract Voting {
         string name; //max of 32 char
         uint256 acceptedVotes; //number of accepted votes
         uint256 rejectedVotes;
+        uint256 senderWeight;
         Status status;
     }
     //Interface
     IERC20 tokenContract;
     //Mappings
     mapping(address => Voter) public voters;
-    mapping(address => mapping(uint256 => bool))userVoted;
     mapping(uint256 => Proposal) public activeProposals;
     mapping(address => uint256) public userProposalCount;
     mapping(uint256 => uint256) private proposalCreationTimes;
     mapping(uint256 => bool) public proposalInVoting;
     mapping(uint256 => uint256) public proposalQueue;
+    mapping(address => mapping (uint256 => bool)) public usersVoteStatus;
     Proposal[] public proposals;
     //Constants
-    uint256 private constant votingDuration = 10 minutes;//3 days;
+    uint256 private constant votingDuration = 2 minutes;//3 days;
     uint8 private constant maxActiveProposal = 5;
     uint8 private constant maxYearlyProposalPerUser = 5;
-    uint32 proposalDelay = 300 seconds;
+    uint32 proposalDelay = 50 seconds;
     uint256 proposalIndex;
     uint256 activeProposalIndex;
     uint256 proposalCreationTime;
-    uint256 queueLength;
+    uint256 public queueLength;
     uint256 public tokenSupply;
     //events
     event proposalCreated(uint256 indexed proposalId, address indexed author, string name);
@@ -74,6 +73,7 @@ contract Voting {
         require(userProposalCount[_proposee] < maxYearlyProposalPerUser, "User Reached Proposal Limit per year");
         require(activeProposalIndex < maxActiveProposal, "Limit of Active Proposals Reached");
         require(weight(_proposee) >= tokenSupply/5000, "Member's shares not enough!");
+        require(queueLength<5, "Maximum pending proposals reached");
         // tryna think of how to prevent one person from proposing too much, think of a way to limit that without incurring sybil attacks.
         uint256 _proposalId = proposalIndex;
         proposals.push(Proposal(
@@ -83,11 +83,13 @@ contract Voting {
             _name,
             0,
             0,
+            0,
             Status.Pending
         ));
         proposalIndex++;
+        queueLength++;
         proposalCreationTimes[_proposalId] = block.timestamp;
-        proposalQueue[queueLength++] = _proposalId;
+        proposalQueue[queueLength] = _proposalId;
         proposalInVoting[_proposalId] =false;
         userProposalCount[msg.sender]++;
         emit proposalCreated((_proposalId), msg.sender, _name);
@@ -96,15 +98,16 @@ contract Voting {
         uint256 currentTime = block.timestamp;
         uint256 processedCount;
         uint256 nextProposal;
-        require(activeProposalIndex < 5);
-        for (; nextProposal < queueLength; nextProposal++) {
+        require(activeProposalIndex < maxActiveProposal);
+        for (; nextProposal <= maxActiveProposal; nextProposal++) {
             uint256 proposalId = proposalQueue[nextProposal];
             if (currentTime >= proposalCreationTimes[proposalId] + proposalDelay && !proposalInVoting[proposalId]) {
                 votingPeriod(proposalId);
                 processedCount++;
-                if (processedCount >= 5) {
-                    break;
-                }
+                queueLength--;
+                // if (processedCount >= 5) {
+                //     break;
+                // }
             }
         }
     }
@@ -120,8 +123,10 @@ contract Voting {
             activeProposal.name,
             activeProposal.acceptedVotes,
             activeProposal.rejectedVotes,
+            0,
             Status.Proceeding
         );
+        proposals[_proposalId].status = Status.Proceeding;
         activeProposalIndex++;
         
     }
@@ -142,38 +147,42 @@ contract Voting {
         _delegate.weight += sender.weight;
     }
     function vote(uint _activeProposalId, VotingOptions voteOption) external {
-        Voter memory sender = voters[msg.sender];
-        Proposal memory proposal = activeProposals[_activeProposalId];
-        require(!userVoted[msg.sender][_activeProposalId]);
-        require(activeProposals[_activeProposalId].status == Status.Proceeding, "Proposal not Pending");
+        Proposal storage proposal = activeProposals[_activeProposalId];
+        require(!usersVoteStatus[msg.sender][_activeProposalId], "You have already Voted");
+        require(activeProposals[_activeProposalId].status == Status.Proceeding, "Proposal not in voting period.");
         require(block.timestamp < proposal.creationTime + votingDuration, "Voting Period is over");
-        require(sender.weight != 0,"You have no right to Vote!");
-        require(!sender.voted, "Already Voted!");
-        uint256 userWeight = weight(msg.sender);
+        proposal.senderWeight = weight(msg.sender);
+        voters[msg.sender].weight = proposal.senderWeight;
         if (voteOption == VotingOptions.Accept) {
             //YES
-            proposal.acceptedVotes += userWeight;
-            userVoted[msg.sender][_activeProposalId] = true;
+            proposal.acceptedVotes += proposal.senderWeight;
+            proposals[_activeProposalId].acceptedVotes += proposal.senderWeight;
+            voters[msg.sender].vote = _activeProposalId;
+            voters[msg.sender].voted = true;
+            usersVoteStatus[msg.sender][_activeProposalId] = true;
         } else {
             // NO
-            proposal.rejectedVotes += userWeight;
-            userVoted[msg.sender][_activeProposalId] = true;
+            proposal.rejectedVotes += proposal.senderWeight;
+            proposals[_activeProposalId].rejectedVotes += proposal.senderWeight;
+            voters[msg.sender].vote = _activeProposalId;
+            voters[msg.sender].voted = true;
+            usersVoteStatus[msg.sender][_activeProposalId] = true;
         }
         emit proposalVoted(_activeProposalId, msg.sender, voteOption);
     }
     function closeProposal(uint256 _activeProposalId) external {
         Proposal memory proposal = activeProposals[_activeProposalId];
-        require(proposal.creationTime > 0, "Proposal not Active");
         require((proposal.status == Status.Proceeding), "Proposal not in Voting Period");
         require(block.timestamp >= proposal.creationTime, "Voting still in progress");
-        delete proposal;
+        delete activeProposals[_activeProposalId];
+        proposals[_activeProposalId].status = proposalResults(_activeProposalId);
         activeProposalIndex--;
-        emit proposalClosed(_activeProposalId, proposal.status);
+        emit proposalClosed(_activeProposalId, proposals[_activeProposalId].status);
     }
     function proposalResults(uint256 _proposalId) public view returns(Status status){
         Proposal memory proposal = proposals[_proposalId];
         //nedd to add if same votecount, what happens
-        require(block.timestamp >= proposal.creationTime, "Voting still in progress");
+        require(block.timestamp >= proposal.creationTime + votingDuration, "Voting still in progress");
         if (proposal.acceptedVotes > proposal.rejectedVotes) {
             proposal.status = Status.Accepted;
         }else if (proposal.rejectedVotes > proposal.acceptedVotes) {
@@ -195,6 +204,7 @@ contract Voting {
                 userProposal.name,
                 userProposal.acceptedVotes,
                 userProposal.rejectedVotes,
+                weight(msg.sender),
                 userProposal.status
             );
         }
