@@ -14,12 +14,6 @@ contract Voting {
         Pending,
         Proceeding
     }
-    struct Voter {
-        address delegate; //allows voter to give their voting right to another
-        uint vote; //THis would ve sued to know the opinion of the voter against or in favour or mayve avstain
-        uint weight;
-        bool voted;
-    }
     struct Proposal {
         address author; //shows the author of the proposal
         uint256 id;
@@ -33,7 +27,6 @@ contract Voting {
     //Interface
     IERC20 tokenContract;
     //Mappings
-    mapping(address => Voter) public voters;
     mapping(uint256 => Proposal) public activeProposals;
     mapping(address => uint256) public userProposalCount;
     mapping(uint256 => uint256) private proposalCreationTimes;
@@ -130,42 +123,21 @@ contract Voting {
         activeProposalIndex++;
         
     }
-    function delegate(address _to) external {
-        Voter storage sender = voters[msg.sender];
-        Voter storage _delegate = voters[_to];
-        require(sender.weight != 0, "No right to vote");
-        require(!sender.voted, "You already voted, cannot delegate");
-        require(msg.sender != _to, "You cannot delegate to yourself");
-        require(_delegate.weight != 0, "Delegate has no right to vote");
-        require(!voters[_to].voted, "Address has voted");
-        while(voters[_to].delegate != address(0)){
-            _to = voters[_to].delegate;
-            require(_to != msg.sender, "Found loop in delegation!");
-        }                
-        sender.voted = true;
-        sender.delegate = _to;
-        _delegate.weight += sender.weight;
-    }
     function vote(uint _activeProposalId, VotingOptions voteOption) external {
         Proposal storage proposal = activeProposals[_activeProposalId];
         require(!usersVoteStatus[msg.sender][_activeProposalId], "You have already Voted");
         require(activeProposals[_activeProposalId].status == Status.Proceeding, "Proposal not in voting period.");
         require(block.timestamp < proposal.creationTime + votingDuration, "Voting Period is over");
         proposal.senderWeight = weight(msg.sender);
-        voters[msg.sender].weight = proposal.senderWeight;
         if (voteOption == VotingOptions.Accept) {
             //YES
             proposal.acceptedVotes += proposal.senderWeight;
             proposals[_activeProposalId].acceptedVotes += proposal.senderWeight;
-            voters[msg.sender].vote = _activeProposalId;
-            voters[msg.sender].voted = true;
             usersVoteStatus[msg.sender][_activeProposalId] = true;
         } else {
             // NO
             proposal.rejectedVotes += proposal.senderWeight;
             proposals[_activeProposalId].rejectedVotes += proposal.senderWeight;
-            voters[msg.sender].vote = _activeProposalId;
-            voters[msg.sender].voted = true;
             usersVoteStatus[msg.sender][_activeProposalId] = true;
         }
         emit proposalVoted(_activeProposalId, msg.sender, voteOption);
