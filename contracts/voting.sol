@@ -1,5 +1,6 @@
 //  SPDX-License-Identifier: MIT
 pragma solidity ^0.8.25;
+
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 contract Voting {
     // this one does a seperate proposal for each option.
@@ -21,7 +22,6 @@ contract Voting {
         string name; //max of 32 char
         uint256 acceptedVotes; //number of accepted votes
         uint256 rejectedVotes;
-        uint256 senderWeight;
         Status status;
     }
     //Interface
@@ -56,25 +56,42 @@ contract Voting {
         tokenSupply = tokenContract.totalSupply();
     }
     
-    function weight(address _member)public view returns (uint256 voteWeight) {        
+    function weight(address _member) public view returns (uint256 voteWeight) {
         uint256 balance = tokenContract.balanceOf(_member);
         require(balance > 0, "Zero Token Balance!");
-        voteWeight = tokenSupply/balance *2;
+        uint256 baseWeight;
+        // Calculate the base weight (e.g., 100 tokens = 1 unit of weight)
+        if (tokenSupply <  10000) {
+            baseWeight = 500;
+        } else if (tokenSupply > 10000 && tokenSupply < 100000) {
+            baseWeight = 5000;
+        }else if (tokenSupply > 100000 && tokenSupply < 10000000) {
+            baseWeight = 50000;
+        }else if (tokenSupply > 10000000 && tokenSupply < 1000000000) {
+            baseWeight = 500000;
+        }else if (tokenSupply > 1000000000 && tokenSupply < 100000000000) {
+            baseWeight = 5000000;
+        }else if (tokenSupply > 100000000000 && tokenSupply < 10000000000000) {
+            baseWeight = 50000000;
+        }else {
+            baseWeight = 5000000000;
+        }    
+        voteWeight = (baseWeight * balance)/ tokenSupply;    
+        // Ensure minimum weight for small balances
+        voteWeight = voteWeight > 1 ? voteWeight : 1;
     }
     function createProposal(string memory _name) external {
         address _proposee = msg.sender;
         require(userProposalCount[_proposee] < maxYearlyProposalPerUser, "User Reached Proposal Limit per year");
         require(activeProposalIndex < maxActiveProposal, "Limit of Active Proposals Reached");
-        require(weight(_proposee) >= tokenSupply/5000, "Member's shares not enough!");
         require(queueLength<5, "Maximum pending proposals reached");
-        // tryna think of how to prevent one person from proposing too much, think of a way to limit that without incurring sybil attacks.
+        // tryna think of how to prevent one person from proposing too much, think of a way to limit that  without incurring sybil attacks.
         uint256 _proposalId = proposalIndex;
         proposals.push(Proposal(
             msg.sender,
             _proposalId,
             block.timestamp,
             _name,
-            0,
             0,
             0,
             Status.Pending
@@ -98,9 +115,6 @@ contract Voting {
                 votingPeriod(proposalId);
                 processedCount++;
                 queueLength--;
-                // if (processedCount >= 5) {
-                //     break;
-                // }
             }
         }
     }
@@ -116,7 +130,6 @@ contract Voting {
             activeProposal.name,
             activeProposal.acceptedVotes,
             activeProposal.rejectedVotes,
-            0,
             Status.Proceeding
         );
         proposals[_proposalId].status = Status.Proceeding;
@@ -128,16 +141,16 @@ contract Voting {
         require(!usersVoteStatus[msg.sender][_activeProposalId], "You have already Voted");
         require(activeProposals[_activeProposalId].status == Status.Proceeding, "Proposal not in voting period.");
         require(block.timestamp < proposal.creationTime + votingDuration, "Voting Period is over");
-        proposal.senderWeight = weight(msg.sender);
+        uint senderWeight = weight(msg.sender);
         if (voteOption == VotingOptions.Accept) {
             //YES
-            proposal.acceptedVotes += proposal.senderWeight;
-            proposals[_activeProposalId].acceptedVotes += proposal.senderWeight;
+            proposal.acceptedVotes += senderWeight;
+            proposals[_activeProposalId].acceptedVotes += senderWeight;
             usersVoteStatus[msg.sender][_activeProposalId] = true;
         } else {
             // NO
-            proposal.rejectedVotes += proposal.senderWeight;
-            proposals[_activeProposalId].rejectedVotes += proposal.senderWeight;
+            proposal.rejectedVotes += senderWeight;
+            proposals[_activeProposalId].rejectedVotes += senderWeight;
             usersVoteStatus[msg.sender][_activeProposalId] = true;
         }
         emit proposalVoted(_activeProposalId, msg.sender, voteOption);
@@ -145,7 +158,7 @@ contract Voting {
     function closeProposal(uint256 _activeProposalId) external {
         Proposal memory proposal = activeProposals[_activeProposalId];
         require((proposal.status == Status.Proceeding), "Proposal not in Voting Period");
-        require(block.timestamp >= proposal.creationTime, "Voting still in progress");
+        require(block.timestamp >= proposal.creationTime + votingDuration, "Voting still in progress");
         delete activeProposals[_activeProposalId];
         proposals[_activeProposalId].status = proposalResults(_activeProposalId);
         activeProposalIndex--;
@@ -176,7 +189,6 @@ contract Voting {
                 userProposal.name,
                 userProposal.acceptedVotes,
                 userProposal.rejectedVotes,
-                weight(msg.sender),
                 userProposal.status
             );
         }
