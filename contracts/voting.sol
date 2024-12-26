@@ -24,67 +24,68 @@ contract Voting {
         uint256 rejectedVotes;
         Status status;
     }
+    struct VotingSession {
+        uint256 sessionId;
+        uint256 startTime;
+        uint256 endTime;
+        bool isActive;
+        mapping(uint256 => Proposal) includedProposals;
+        uint256 totalBalance;
+    }
+    struct Voter{
+        uint256 lockedAmount;
+        uint256 lockedTime;
+    }
     //Interface
     IERC20 tokenContract;
     //Mappings
+    mapping(address => mapping(uint256 => Voter)) private voters;
+    mapping(uint256 => VotingSession) public votingSessions;
     mapping(uint256 => Proposal) public activeProposals;
     mapping(address => uint256) public userProposalCount;
     mapping(uint256 => uint256) private proposalCreationTimes;
     mapping(uint256 => bool) public proposalInVoting;
     mapping(uint256 => uint256) public proposalQueue;
+    mapping(address => uint256) public totalLockedBalance;
     mapping(address => mapping (uint256 => bool)) public usersVoteStatus;
     Proposal[] public proposals;
     //Constants
-    uint256 private constant votingDuration = 2 minutes;//3 days;
+    uint256 private constant votingDuration = 5 minutes;//3 days;
+    uint256 private constant timeDurationforLocking = 5 minutes;
     uint8 private constant maxActiveProposal = 5;
     uint8 private constant maxYearlyProposalPerUser = 5;
+    uint8 private constant minLockPercentage = 10;
     uint32 proposalDelay = 50 seconds;
+    uint256 private constant maxVoteWeight = 10000;
+
     uint256 proposalIndex;
     uint256 activeProposalIndex;
-    uint256 proposalCreationTime;
     uint256 public queueLength;
     uint256 public tokenSupply;
+    uint256 public currentSessionId;
     //events
     event proposalCreated(uint256 indexed proposalId, address indexed author, string name);
     event proposalVoted(uint256 indexed proposalId, address indexed voter, VotingOptions voteOption);
     event proposalClosed(uint256 indexed proposalId, Status status);
     event proposalVoting(uint256 indexed proposalId, Status status);
+    event SessionStarted(uint256 indexed sessionId, uint256 startTime, Proposal includedProposals);
+    event SessionEnded(uint256 indexed sessionId, uint256 endTIme, Proposal includedProposals);
+    event TokensLocked(address indexed voter, uint256 sessionId, uint256 amount);
+    event TokensUnlocked(address indexed voter, uint256 sessionId, uint256 amount);
+
+
 
     
     constructor(address _tokenAddress) {
         tokenContract = IERC20(_tokenAddress);
         tokenSupply = tokenContract.totalSupply();
     }
-    
-    function weight(address _member) public view returns (uint256 voteWeight) {
-        uint256 balance = tokenContract.balanceOf(_member);
-        require(balance > 0, "Zero Token Balance!");
-        uint256 baseWeight;
-        // Calculate the base weight (e.g., 100 tokens = 1 unit of weight)
-        if (tokenSupply <  10000) {
-            baseWeight = 500;
-        } else if (tokenSupply > 10000 && tokenSupply < 100000) {
-            baseWeight = 5000;
-        }else if (tokenSupply > 100000 && tokenSupply < 10000000) {
-            baseWeight = 50000;
-        }else if (tokenSupply > 10000000 && tokenSupply < 1000000000) {
-            baseWeight = 500000;
-        }else if (tokenSupply > 1000000000 && tokenSupply < 100000000000) {
-            baseWeight = 5000000;
-        }else if (tokenSupply > 100000000000 && tokenSupply < 10000000000000) {
-            baseWeight = 50000000;
-        }else {
-            baseWeight = 5000000000;
-        }    
-        voteWeight = (baseWeight * balance)/ tokenSupply;    
-        // Ensure minimum weight for small balances
-        voteWeight = voteWeight > 1 ? voteWeight : 1;
-    }
     function createProposal(string memory _name) external {
         address _proposee = msg.sender;
-        require(userProposalCount[_proposee] < maxYearlyProposalPerUser, "User Reached Proposal Limit per year");
-        require(activeProposalIndex < maxActiveProposal, "Limit of Active Proposals Reached");
-        require(queueLength<5, "Maximum pending proposals reached");
+        require(userProposalCount[_proposee] < maxYearlyProposalPerUser, "User Creation Limit Reached");
+        require(activeProposalIndex < maxActiveProposal, "Active Proposals Limit Reached");
+        require(queueLength<5, "Max pending proposals reached");
+        require(tokenContract.balanceOf(msg.sender) != 0, "No Token Balance");
         // tryna think of how to prevent one person from proposing too much, think of a way to limit that  without incurring sybil attacks.
         uint256 _proposalId = proposalIndex;
         proposals.push(Proposal(
@@ -109,6 +110,7 @@ contract Voting {
         uint256 processedCount;
         uint256 nextProposal;
         require(activeProposalIndex < maxActiveProposal);
+        require(queueLength != 0, "No pending proposlas");
         for (; nextProposal <= maxActiveProposal; nextProposal++) {
             uint256 proposalId = proposalQueue[nextProposal];
             if (currentTime >= proposalCreationTimes[proposalId] + proposalDelay && !proposalInVoting[proposalId]) {
@@ -120,31 +122,39 @@ contract Voting {
     }
     function votingPeriod(uint256 _proposalId) internal {
         Proposal storage activeProposal = proposals[_proposalId];
-        uint256 _activeId = activeProposalIndex;
         proposalInVoting[_proposalId] = true;
     
         activeProposals[_proposalId] = Proposal(
             activeProposal.author,
-            _activeId,
+            activeProposalIndex,
             block.timestamp,
             activeProposal.name,
             activeProposal.acceptedVotes,
             activeProposal.rejectedVotes,
             Status.Proceeding
         );
+        if (votingSessions[currentSessionId].isActive) {
+            votingSessions[currentSessionId].includedProposals[_proposalId] = activeProposals[_proposalId];
+        }
         proposals[_proposalId].status = Status.Proceeding;
+        //includedProposals[_proposalId] = activeProposal;
         activeProposalIndex++;
         
     }
     function vote(uint _activeProposalId, VotingOptions voteOption) external {
         Proposal storage proposal = activeProposals[_activeProposalId];
-        require(!usersVoteStatus[msg.sender][_activeProposalId], "You have already Voted");
         require(activeProposals[_activeProposalId].status == Status.Proceeding, "Proposal not in voting period.");
+        VotingSession storage currentSession = votingSessions[currentSessionId];
+        require(currentSession.isActive == true, "Session not Accepting Votes");        
+        require(currentSession.includedProposals[_activeProposalId].author != address(0), "Proposal not in current Session");
+        Voter storage voter = voters[msg.sender][currentSessionId];
+        require(!usersVoteStatus[msg.sender][_activeProposalId], "You have already Voted on this proposal");
+        require(voter.lockedAmount != 0, "No Locked Tokens found");        
         require(block.timestamp < proposal.creationTime + votingDuration, "Voting Period is over");
-        uint senderWeight = weight(msg.sender);
+        uint senderWeight = calculateWeight(msg.sender, voter.lockedAmount);
         if (voteOption == VotingOptions.Accept) {
             //YES
-            proposal.acceptedVotes += senderWeight;
+            proposal.acceptedVotes = proposal.acceptedVotes + senderWeight;
             proposals[_activeProposalId].acceptedVotes += senderWeight;
             usersVoteStatus[msg.sender][_activeProposalId] = true;
         } else {
@@ -155,10 +165,10 @@ contract Voting {
         }
         emit proposalVoted(_activeProposalId, msg.sender, voteOption);
     }
-    function closeProposal(uint256 _activeProposalId) external {
+    function closeProposal(uint256 _activeProposalId) public {
         Proposal memory proposal = activeProposals[_activeProposalId];
         require((proposal.status == Status.Proceeding), "Proposal not in Voting Period");
-        require(block.timestamp >= proposal.creationTime + votingDuration, "Voting still in progress");
+        require(block.timestamp > proposal.creationTime + votingDuration, "Voting still in progress");
         delete activeProposals[_activeProposalId];
         proposals[_activeProposalId].status = proposalResults(_activeProposalId);
         activeProposalIndex--;
@@ -167,7 +177,7 @@ contract Voting {
     function proposalResults(uint256 _proposalId) public view returns(Status status){
         Proposal memory proposal = proposals[_proposalId];
         //nedd to add if same votecount, what happens
-        require(block.timestamp >= proposal.creationTime + votingDuration, "Voting still in progress");
+        require(block.timestamp > proposal.creationTime + votingDuration, "Voting still in progress");
         if (proposal.acceptedVotes > proposal.rejectedVotes) {
             proposal.status = Status.Accepted;
         }else if (proposal.rejectedVotes > proposal.acceptedVotes) {
@@ -193,5 +203,99 @@ contract Voting {
             );
         }
     }
+    function lockTokensForVoting(uint256 _amount) external {
+        require(votingSessions[currentSessionId].isActive, "Session Not Active For Voting");
+        require(_amount != 0, "Amount must be greater than 0");
+        require(block.timestamp < votingSessions[currentSessionId].startTime + timeDurationforLocking, "Session not acepting Token locks");
+        uint256 userBalance = tokenContract.balanceOf(msg.sender);
+        require(userBalance > _amount, "Insufficient Balance");
+        Voter storage voter = voters[msg.sender][currentSessionId];
+        uint256 minRequired = (userBalance * minLockPercentage) / 100;
+        require(_amount > minRequired, "Minimum Lock 10% of token Balance");
+        require(tokenContract.transferFrom(msg.sender, address(this), _amount), "Transfer Failed");
+        voter.lockedAmount = _amount;
+        voter.lockedTime = block.timestamp;
+        totalLockedBalance[msg.sender] += _amount;
+        votingSessions[currentSessionId].totalBalance = votingSessions[currentSessionId].totalBalance + _amount;
+        emit TokensLocked(msg.sender, currentSessionId, _amount);
+
+    }
+    function getTotalLockedBalance() public view returns(uint TotalLockedBalance) {
+        require(block.timestamp > votingSessions[currentSessionId].startTime + timeDurationforLocking, "Locking Duration not over yet");
+        TotalLockedBalance = votingSessions[currentSessionId].totalBalance;
+    }
+    function calculateWeight(address _member, uint256 _lockedAmount) public view returns (uint256 voteWeight) {
+        Voter storage voter = voters[_member][currentSessionId];
+        require(voter.lockedAmount != 0, "User has not Locked any TOken");
+        uint256 totalLocked = votingSessions[currentSessionId].totalBalance;
+        uint256 memberShare = (_lockedAmount * tokenSupply) / totalLocked;
+
+        // Apply a non-linear weighting formula
+        voteWeight = (memberShare * memberShare) / tokenSupply;
+
+        // Scale the result
+        voteWeight = (voteWeight * maxVoteWeight) / tokenSupply;
+
+        // Ensure minimum weight
+        voteWeight = voteWeight > 1 ? voteWeight : 1;
+
+        // Cap maximum weight
+        voteWeight = voteWeight < 10000 ? voteWeight : 10000;
+    }
+    function unlockTokens() external {
+        VotingSession storage session = votingSessions[currentSessionId];
+        require(!session.isActive || block.timestamp > session.endTime, "Session still active");
+        Voter storage voter = voters[msg.sender][currentSessionId];
+        require(voter.lockedAmount != 0, "No tokens to Unlock");
+        uint256 amountToUnlock = voter.lockedAmount;
+        voter.lockedAmount = 0;
+        session.totalBalance -= amountToUnlock;
+        totalLockedBalance[msg.sender] -= amountToUnlock;
+        require(tokenContract.transfer(msg.sender, amountToUnlock), "Transer Failed");
+        emit TokensUnlocked(msg.sender, currentSessionId, amountToUnlock);
+    }
+    function activateSession() public {
+        // Increment session ID first to avoid any potential issues with the zero session
+        ++currentSessionId;
     
+        // Create new session storage reference
+        VotingSession storage newSession = votingSessions[currentSessionId];
+    
+        // Set the session parameters individually
+        newSession.sessionId = currentSessionId;
+        newSession.startTime = block.timestamp;
+        newSession.endTime = block.timestamp + votingDuration + timeDurationforLocking;
+        newSession.isActive = true;
+        newSession.totalBalance = 0;
+    
+    
+    
+    }
+    function startSession() public {
+        VotingSession storage newSession = votingSessions[currentSessionId];
+        newSession.totalBalance = getTotalLockedBalance();
+        // Process any pending proposals for this session
+        processPendingProposals();
+
+        emit SessionStarted(
+        currentSessionId,
+        newSession.startTime, 
+        newSession.includedProposals[0] // Note: You might want to emit multiple proposals or modify this
+        );
+
+    }
+    function endSession() public {
+        require(block.timestamp > votingSessions[currentSessionId].endTime, "Session not yet finished.");
+        require(votingSessions[currentSessionId].isActive, "Session not Active");
+    
+        for (uint i = 0; i<activeProposalIndex; ++i) {
+            Proposal memory proposal = proposals[activeProposalIndex - 1-i];
+                if(block.timestamp >= proposal.creationTime + votingDuration + timeDurationforLocking && !proposalInVoting[proposal.id]) {
+                    closeProposal(proposal.id);
+                }
+        votingSessions[currentSessionId].isActive = false;
+    }
+
 }
+}
+//0x9396B453Fad71816cA9f152Ae785276a1D578492
